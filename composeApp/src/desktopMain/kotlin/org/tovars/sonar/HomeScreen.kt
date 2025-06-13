@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.Button
 import androidx.compose.material.Icon
 import androidx.compose.material.Scaffold
 import androidx.compose.material.Text
@@ -40,8 +39,6 @@ import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.PlayerSkipBack
 import compose.icons.tablericons.PlayerSkipForward
-import compose.icons.tablericons.PlayerTrackNext
-import compose.icons.tablericons.PlayerTrackPrev
 import compose.icons.tablericons.Playlist
 import compose.icons.tablericons.Volume
 import compose.icons.tablericons.X
