@@ -23,7 +23,15 @@ kotlin {
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.androidx.lifecycle.runtimeCompose)
 
+            //Icons
             implementation("br.com.devsrsouza.compose.icons:tabler-icons:1.1.1")
+
+            //Audio and video
+            //implementation("io.github.kdroidfilter:composemediaplayer:0.7.1")
+            implementation("io.github.kdroidfilter:composemediaplayer:0.7.1")
+            implementation("be.tarsos.dsp:core:2.5")
+            implementation("be.tarsos.dsp:jvm:2.5")
+            implementation("com.googlecode.soundlibs:mp3spi:1.9.5.4")
 
         }
         commonTest.dependencies {

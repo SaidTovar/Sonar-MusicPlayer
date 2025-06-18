@@ -1,13 +1,21 @@
 package org.tovars.sonar
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -23,8 +31,8 @@ import java.awt.Window
 fun main() = application {
 
     val windowState = rememberWindowState(
-        width = 1480.dp,
-        height = 960.dp
+        width = 1100.dp,
+        height = 700.dp
     )
 
     var windowRef by remember { mutableStateOf<Window?>(null) }
@@ -49,40 +57,7 @@ fun main() = application {
             println("Window reference: $windowRef")
         }
 
-        Box (
-            modifier = Modifier.pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = {
-                        val mousePos = MouseInfo.getPointerInfo().location
-                        initialMousePosition = mousePos.x to mousePos.y
-                        windowRef?.let { win ->
-                            initialWindowLocation = win.location.x to win.location.y
-                        }
-                    },
-                    onDrag = { _, _ ->
-                        val currentMousePos = MouseInfo.getPointerInfo().location
-                        val (startMouseX, startMouseY) = initialMousePosition ?: return@detectDragGestures
-                        val (startWindowX, startWindowY) = initialWindowLocation ?: return@detectDragGestures
-
-                        val deltaX = currentMousePos.x - startMouseX
-                        val deltaY = currentMousePos.y - startMouseY
-
-                        windowRef?.setLocation(
-                            startWindowX + deltaX,
-                            startWindowY + deltaY
-                        )
-                    },
-                    onDragEnd = {
-                        initialMousePosition = null
-                        initialWindowLocation = null
-                    },
-                    onDragCancel = {
-                        initialMousePosition = null
-                        initialWindowLocation = null
-                    }
-                )
-            }
-        ){
+        Box {
 
             App(
                 exitApplication = ::exitApplication,
@@ -100,6 +75,46 @@ fun main() = application {
                 }
             )
 
+            Box(
+                modifier = Modifier.clip(RoundedCornerShape(40.dp))
+                    .fillMaxWidth()
+                    .height(16.dp)
+                    .align(Alignment.TopCenter)
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = {
+                                val mousePos = MouseInfo.getPointerInfo().location
+                                initialMousePosition = mousePos.x to mousePos.y
+                                windowRef?.let { win ->
+                                    initialWindowLocation = win.location.x to win.location.y
+                                }
+                            },
+                            onDrag = { _, _ ->
+                                val currentMousePos = MouseInfo.getPointerInfo().location
+                                val (startMouseX, startMouseY) = initialMousePosition ?: return@detectDragGestures
+                                val (startWindowX, startWindowY) = initialWindowLocation ?: return@detectDragGestures
+
+                                val deltaX = currentMousePos.x - startMouseX
+                                val deltaY = currentMousePos.y - startMouseY
+
+                                windowRef?.setLocation(
+                                    startWindowX + deltaX,
+                                    startWindowY + deltaY
+                                )
+                            },
+                            onDragEnd = {
+                                initialMousePosition = null
+                                initialWindowLocation = null
+                            },
+                            onDragCancel = {
+                                initialMousePosition = null
+                                initialWindowLocation = null
+                            }
+                        )
+                    }
+            )
+
         }
+
     }
 }
