@@ -12,7 +12,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.append
 import io.ktor.util.encodeBase64
-import io.ktor.utils.io.InternalAPI
 import org.tovars.sonar.BuildKonfig
 import org.tovars.sonar.data.model.SpotifyTokenResponse
 import org.tovars.sonar.data.model.SpotifyTopTracksResponse

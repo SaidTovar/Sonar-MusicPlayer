@@ -1,7 +1,6 @@
 package org.tovars.sonar.core.di
 
 import io.ktor.client.HttpClient
-import okhttp3.OkHttpClient
 import org.koin.android.annotation.KoinViewModel
 import org.koin.core.annotation.Factory
 import org.koin.core.annotation.Module
