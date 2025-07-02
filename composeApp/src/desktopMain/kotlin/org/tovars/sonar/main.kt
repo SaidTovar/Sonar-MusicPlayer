@@ -22,99 +22,105 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import org.jetbrains.compose.resources.painterResource
+import org.tovars.sonar.core.di.initKoin
 import sonar_musicplayer.composeapp.generated.resources.Res
 import sonar_musicplayer.composeapp.generated.resources.logo2
 import java.awt.Frame
 import java.awt.MouseInfo
 import java.awt.Window
 
-fun main() = application {
+fun main() {
 
-    val windowState = rememberWindowState(
-        width = 1100.dp,
-        height = 700.dp
-    )
+    initKoin()
 
-    var windowRef by remember { mutableStateOf<Window?>(null) }
+    application {
 
-    var initialMousePosition by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var initialWindowLocation by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+        val windowState = rememberWindowState(
+            width = 1100.dp,
+            height = 700.dp
+        )
 
+        var windowRef by remember { mutableStateOf<Window?>(null) }
 
-    Window(
-        onCloseRequest = ::exitApplication,
-        title = "Sonar - Music Player",
-        transparent = true,
-        undecorated = true,
-        state = windowState,
-        icon = painterResource(Res.drawable.logo2)
-    ) {
-        // Guardamos la referencia AWT una sola vez
-        LaunchedEffect(Unit) {
-            windowRef = Window::class.java
-                .cast(this@Window.javaClass.getDeclaredMethod("getWindow").apply { isAccessible = true }
-                    .invoke(this@Window))
-            println("Window reference: $windowRef")
-        }
+        var initialMousePosition by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+        var initialWindowLocation by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
-        Box {
+        Window(
+            onCloseRequest = ::exitApplication,
+            title = "Sonar - Music Player",
+            transparent = true,
+            undecorated = true,
+            state = windowState,
+            icon = painterResource(Res.drawable.logo2)
+        ) {
+            // Guardamos la referencia AWT una sola vez
+            LaunchedEffect(Unit) {
+                windowRef = Window::class.java
+                    .cast(this@Window.javaClass.getDeclaredMethod("getWindow").apply { isAccessible = true }
+                        .invoke(this@Window))
+                println("Window reference: $windowRef")
+            }
 
-            App(
-                exitApplication = ::exitApplication,
-                maximizeApplication = {
-                    val awtWindow = Frame.getFrames().firstOrNull { it.isActive }
-                    if (awtWindow != null) {
-                        awtWindow.extendedState = Frame.MAXIMIZED_BOTH // Maximizar
+            Box {
+
+                App(
+                    exitApplication = ::exitApplication,
+                    maximizeApplication = {
+                        val awtWindow = Frame.getFrames().firstOrNull { it.isActive }
+                        if (awtWindow != null) {
+                            awtWindow.extendedState = Frame.MAXIMIZED_BOTH // Maximizar
+                        }
+                    },
+                    minimizeApplication = {
+                        val awtWindow = Frame.getFrames().firstOrNull { it.isActive }
+                        if (awtWindow != null) {
+                            awtWindow.extendedState = Frame.ICONIFIED // Minimizar
+                        }
                     }
-                },
-                minimizeApplication = {
-                    val awtWindow = Frame.getFrames().firstOrNull { it.isActive }
-                    if (awtWindow != null) {
-                        awtWindow.extendedState = Frame.ICONIFIED // Minimizar
-                    }
-                }
-            )
+                )
 
-            Box(
-                modifier = Modifier.clip(RoundedCornerShape(40.dp))
-                    .fillMaxWidth()
-                    .height(16.dp)
-                    .align(Alignment.TopCenter)
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = {
-                                val mousePos = MouseInfo.getPointerInfo().location
-                                initialMousePosition = mousePos.x to mousePos.y
-                                windowRef?.let { win ->
-                                    initialWindowLocation = win.location.x to win.location.y
+                Box(
+                    modifier = Modifier.clip(RoundedCornerShape(40.dp))
+                        .fillMaxWidth()
+                        .height(16.dp)
+                        .align(Alignment.TopCenter)
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = {
+                                    val mousePos = MouseInfo.getPointerInfo().location
+                                    initialMousePosition = mousePos.x to mousePos.y
+                                    windowRef?.let { win ->
+                                        initialWindowLocation = win.location.x to win.location.y
+                                    }
+                                },
+                                onDrag = { _, _ ->
+                                    val currentMousePos = MouseInfo.getPointerInfo().location
+                                    val (startMouseX, startMouseY) = initialMousePosition ?: return@detectDragGestures
+                                    val (startWindowX, startWindowY) = initialWindowLocation ?: return@detectDragGestures
+
+                                    val deltaX = currentMousePos.x - startMouseX
+                                    val deltaY = currentMousePos.y - startMouseY
+
+                                    windowRef?.setLocation(
+                                        startWindowX + deltaX,
+                                        startWindowY + deltaY
+                                    )
+                                },
+                                onDragEnd = {
+                                    initialMousePosition = null
+                                    initialWindowLocation = null
+                                },
+                                onDragCancel = {
+                                    initialMousePosition = null
+                                    initialWindowLocation = null
                                 }
-                            },
-                            onDrag = { _, _ ->
-                                val currentMousePos = MouseInfo.getPointerInfo().location
-                                val (startMouseX, startMouseY) = initialMousePosition ?: return@detectDragGestures
-                                val (startWindowX, startWindowY) = initialWindowLocation ?: return@detectDragGestures
+                            )
+                        }
+                )
 
-                                val deltaX = currentMousePos.x - startMouseX
-                                val deltaY = currentMousePos.y - startMouseY
-
-                                windowRef?.setLocation(
-                                    startWindowX + deltaX,
-                                    startWindowY + deltaY
-                                )
-                            },
-                            onDragEnd = {
-                                initialMousePosition = null
-                                initialWindowLocation = null
-                            },
-                            onDragCancel = {
-                                initialMousePosition = null
-                                initialWindowLocation = null
-                            }
-                        )
-                    }
-            )
+            }
 
         }
-
     }
+
 }
