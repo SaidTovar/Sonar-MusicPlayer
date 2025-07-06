@@ -7,8 +7,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,12 +30,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Button
 import androidx.compose.material.Icon
 import androidx.compose.material.Slider
+import androidx.compose.material.SliderDefaults
 import androidx.compose.material.Text
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,42 +47,47 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import be.tarsos.dsp.AudioEvent
-import be.tarsos.dsp.AudioProcessor
-import be.tarsos.dsp.io.jvm.AudioDispatcherFactory
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsMaximize
 import compose.icons.tablericons.ArrowsMinimize
 import compose.icons.tablericons.ArrowsSort
+import compose.icons.tablericons.PlayerPause
 import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.PlayerSkipBack
 import compose.icons.tablericons.PlayerSkipForward
 import compose.icons.tablericons.Playlist
 import compose.icons.tablericons.Volume
+import compose.icons.tablericons.Volume2
+import compose.icons.tablericons.Volume3
 import compose.icons.tablericons.X
-import io.github.kdroidfilter.composemediaplayer.VideoPlayerSurface
-import io.github.kdroidfilter.composemediaplayer.rememberVideoPlayerState
-import io.github.vinceglb.filekit.PlatformFile
-import kotlinx.coroutines.CoroutineScope
+import korlibs.audio.format.WAV
+import korlibs.audio.format.mp3.MP3Decoder
+import korlibs.audio.format.toWav
+import korlibs.audio.sound.SoundChannel
+import korlibs.audio.sound.nativeSoundProvider
+import korlibs.audio.sound.playing
+import korlibs.io.stream.openAsync
+import korlibs.time.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.viewmodel.koinViewModel
 import sonar_musicplayer.composeapp.generated.resources.Res
 import sonar_musicplayer.composeapp.generated.resources.compose_multiplatform
 import java.io.File
-import java.net.HttpURLConnection
 import java.net.URL
-import javax.sound.sampled.AudioFileFormat
-import javax.sound.sampled.AudioSystem
-import kotlin.math.absoluteValue
+import kotlin.math.sqrt
 
 @Composable
 fun HomeScreen(
@@ -269,8 +282,82 @@ fun ItemsMenu(){
 @Composable
 fun MusicPlayer(){
 
+    val amplitudes = remember { mutableStateListOf<Float>() }
+    var currentProgress by remember { mutableStateOf(0) }
+    var progressAudio by remember { mutableStateOf(0f) }
+    val downloadComplete = remember { MutableStateFlow(false) }
+    val channelRef = remember { mutableStateOf<SoundChannel?>(null) }
+    val durationSeconds = remember { mutableStateOf(1f) }
+
+    val mp3Url = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
+
+    // Actualizar barra de progreso de audio
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(500)
+            channelRef.value?.let { ch ->
+                if (!ch.playing) return@let
+                val pos = ch.current.seconds.toFloat()
+                durationSeconds.value = ch.total.seconds.toFloat().coerceAtLeast(1f)
+                progressAudio = pos / durationSeconds.value
+            }
+        }
+    }
+
+    // Iniciar descarga y reproducción
+    LaunchedEffect(Unit) {
+        val tempFile = File.createTempFile("streaming_audio", ".mp3")
+
+        coroutineScope {
+            launch(Dispatchers.IO) {
+                // Descargar progresivamente el mp3
+                val conn = URL(mp3Url).openConnection()
+                val totalSize = conn.contentLengthLong
+                conn.getInputStream().use { input ->
+                    tempFile.outputStream().use { output ->
+                        val buffer = ByteArray(8192)
+                        var totalRead = 0L
+                        var bytesRead: Int
+
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            totalRead += bytesRead
+                            val percent = (totalRead * 100 / totalSize).toInt()
+                            if (percent != currentProgress) {
+                                currentProgress = percent
+                                if (percent >= 100) {
+                                    downloadComplete.value = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            launch {
+                delay(5000) // Esperamos a que se descargue un poco
+                val stream = tempFile.inputStream().readAllBytes()
+                val audioData = MP3Decoder.decode(stream) ?: error("No se pudo decodificar MP3")
+                val channel = nativeSoundProvider.createSound(audioData, streaming = true).play()
+                channelRef.value = channel
+
+                // Extraer amplitudesvl
+                val wavData = WAV.decode(audioData.toWav().openAsync())
+                wavData?.let {
+
+                    val samples = it.samplesInterleaved.data
+                    val floatSamples = samples.map { s -> s.toFloat() / Short.MAX_VALUE }
+                    val downsampled = downsampleAmplitudes(floatSamples, 100)
+                    val normalized = downsampled.map { it / (downsampled.maxOrNull() ?: 1f) }
+                    amplitudes.clear()
+                    amplitudes.addAll(normalized)
+                }
+            }
+        }
+    }
+
     Row (
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.CenterVertically
     ){
 
         Image(
@@ -317,14 +404,19 @@ fun MusicPlayer(){
             }
 
             IconButton(
-                onClick = {}
+                onClick = {
+                    channelRef.value?.let {
+                        println("play: ${it.playing}")
+                        if (it.playing) it.pause() else it.resume()
+                    }
+                }
             ) {
                 Icon(
                     modifier = Modifier.clip(CircleShape)
                         .size(40.dp)
                         .background(Color(0xfff6fb8d))
                         .padding(10.dp),
-                    imageVector = TablerIcons.PlayerPlay,
+                    imageVector = if (channelRef.value?.playing == true) TablerIcons.PlayerPause else TablerIcons.PlayerPlay,
                     contentDescription = "",
                     tint = Color.Black
                 )
@@ -348,13 +440,81 @@ fun MusicPlayer(){
         Box (
             modifier = Modifier.padding(horizontal = 16.dp)
                 .fillMaxHeight()
-                .width(200.dp)
-                .background(Color.DarkGray)
+                .width(200.dp),
+            contentAlignment = Alignment.Center
 
-        )
+        ){
+
+            /*
+            if (amplitudes.isNotEmpty()) {
+                WaveformView(
+                    amplitudes = amplitudes,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                        .fillMaxSize()
+                )
+            }
+            */
+
+/*
+
+            Slider(
+                value = progressAudio,
+                onValueChange = {
+                    progressAudio = it
+                },
+                onValueChangeFinished = {
+                    channelRef.value?.let { ch ->
+                        ch.current = (progressAudio * durationSeconds.value).seconds
+                    }
+                },
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White,
+                    inactiveTrackColor = Color.LightGray
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(24.dp) // cambia el alto total del Slider
+            )
+*/
+
+            /*
+            ThinSlider(
+                value = progressAudio,
+                onValueChange = {
+                    progressAudio = it
+                    channelRef.value?.let { ch ->
+                        ch.current = (progressAudio * durationSeconds.value).seconds
+                    }
+                                },
+                modifier = Modifier.fillMaxWidth(),
+                trackHeight = 1.dp,
+                thumbRadius = 6.dp,
+                activeColor = Color.White,
+                inactiveColor = Color.Gray
+            )
+            */
+
+            WaveformSlider(
+                value = progressAudio,
+                onValueChange = {
+                    progressAudio = it
+                    channelRef.value?.let { ch ->
+                        ch.current = (progressAudio * durationSeconds.value).seconds
+                    }
+                },
+                amplitudes = amplitudes,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            )
+
+
+        }
 
         Text(
-            "0:00",
+            "${progressAudioToString(channelRef.value?.current?.seconds?.toFloat()?:0f)} : ${progressAudioToString(durationSeconds.value)}",
             color = Color.White,
             fontSize = 12.sp
         )
@@ -384,10 +544,14 @@ fun MusicPlayer(){
             }
 
             IconButton(
-                onClick = {}
+                onClick = {
+                    channelRef.value?.let {
+                        if (it.volume > 0f) it.volume = 0.0 else it.volume = 1.0
+                    }
+                }
             ) {
                 Icon(
-                    TablerIcons.Volume,
+                    imageVector = if (channelRef.value?.volume == 0.0) TablerIcons.Volume3 else TablerIcons.Volume,
                     "",
                     tint = Color.White
                 )
@@ -400,199 +564,102 @@ fun MusicPlayer(){
 
 }
 
-fun downloadFileFromUrl(url: String): File {
-    val connection = URL(url).openConnection() as HttpURLConnection
-    val totalBytes = connection.contentLengthLong
+fun progressAudioToString(progress: Float): String {
 
-    val tempFile = File.createTempFile("temp_video", ".mp4")
+    val minutes = (progress / 60).toInt()
+    val seconds = (progress % 60).toInt()
 
-    connection.inputStream.use { input ->
-        tempFile.outputStream().use { output ->
-            val buffer = ByteArray(8 * 1024)
-            var bytesRead: Int
-            var downloadedBytes = 0L
-            var lastProgress = -1
+    return String.format("%02d:%02d", minutes, seconds)
 
-            while (input.read(buffer).also { bytesRead = it } != -1) {
-                output.write(buffer, 0, bytesRead)
-                downloadedBytes += bytesRead
+}
 
-                // Calcular el progreso solo si se conoce el total
-                if (totalBytes > 0) {
-                    val progress = (downloadedBytes * 100 / totalBytes).toInt()
-                    if (progress != lastProgress) {
-                        println("Descargando: $progress%")
-                        lastProgress = progress
-                    }
+@Composable
+fun ThinSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    trackHeight: Dp = 2.dp,
+    thumbRadius: Dp = 6.dp,
+    activeColor: Color = Color.White,
+    inactiveColor: Color = Color.LightGray,
+    enabled: Boolean = true
+) {
+    val thumbRadiusPx = with(LocalDensity.current) { thumbRadius.toPx() }
+    val trackHeightPx = with(LocalDensity.current) { trackHeight.toPx() }
+
+    var sliderWidthPx by remember { mutableStateOf(1f) }
+
+    // Recalculamos el offset real del pulgar según el valor actual
+    val thumbOffsetX = remember(value, sliderWidthPx) {
+        (value.coerceIn(0f, 1f)) * sliderWidthPx
+    }
+
+    val draggableState = rememberDraggableState { delta ->
+        if (!enabled) return@rememberDraggableState
+
+        val newOffset = (thumbOffsetX + delta).coerceIn(0f, sliderWidthPx)
+        val newValue = (newOffset / sliderWidthPx).coerceIn(0f, 1f)
+        onValueChange(newValue)
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(thumbRadius * 2)
+            .onGloballyPositioned {
+                sliderWidthPx = it.size.width.toFloat()
+            }
+            .draggable(
+                orientation = Orientation.Horizontal,
+                state = draggableState,
+                enabled = enabled
+            )
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures { offset ->
+                    val newValue = (offset.x / sliderWidthPx).coerceIn(0f, 1f)
+                    onValueChange(newValue)
                 }
             }
-        }
-    }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val centerY = size.height / 2
 
-    println("Descarga completa: ${tempFile.absolutePath}")
-    return tempFile
-}
-
-fun extractWaveformAmplitudesFromVideo(videoUrl: String): List<Float> {
-
-    val amplitudes = mutableListOf<Float>()
-    val sampleRate = 44100
-    val bufferSize = 2048
-    val overlap = 1024
-
-    val videoFile = downloadFileFromUrl(videoUrl)
-
-    val dispatcher = AudioDispatcherFactory.fromPipe(videoFile.absolutePath, sampleRate, bufferSize, overlap)
-    dispatcher.addAudioProcessor(object : AudioProcessor {
-        override fun process(audioEvent: AudioEvent): Boolean {
-            amplitudes += audioEvent.floatBuffer.map { it.absoluteValue }
-            return true
-        }
-        override fun processingFinished() {}
-    })
-
-    dispatcher.run()
-
-    // Limpia el archivo después de usarlo
-    videoFile.delete()
-
-    return amplitudes
-}
-
-@Composable
-fun MediaPlayerScreenORI() {
-    val playerState = rememberVideoPlayerState()
-
-    val amplitudes = remember { mutableStateListOf<Float>() }
-
-    LaunchedEffect(Unit) {
-        val videoUrl = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-
-        playerState.openUri(videoUrl)
-
-        withContext(Dispatchers.IO) {
-            //val amplitudesRaw = extractWaveformAmplitudesFromVideo(videoUrl)
-            val amplitudesRaw = extractWaveformAmplitudesFromVideo(videoUrl)
-
-            val downsampled = downsampleAmplitudes(amplitudesRaw, 500)
-            val normalized = downsampled.map { it / (downsampled.maxOrNull() ?: 1f) }
-
-            withContext(Dispatchers.Main) {
-                amplitudes.clear()
-                amplitudes.addAll(normalized)
-            }
-        }
-    }
-
-    Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-        // Video
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            VideoPlayerSurface(
-                playerState = playerState,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        // Waveform
-        if (amplitudes.isNotEmpty()) {
-            Text("Waveform",  color = Color.White, style = MaterialTheme.typography.labelLarge)
-
-            println("amplitudes size: ${amplitudes.size}")
-            WaveformView(
-                amplitudes = amplitudes,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(100.dp)
-                    .background(Color.Black)
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        // Controles
-        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-            Button(onClick = { playerState.play() }) { Text("Play") }
-            Button(onClick = { playerState.pause() }) { Text("Pause") }
-        }
-
-        Text("Volume: ${(playerState.volume * 100).toInt()}%")
-
-        Slider(
-            value = playerState.volume,
-            onValueChange = { playerState.volume = it },
-            valueRange = 0f..1f
-        )
-    }
-}
-
-fun convertMp3ToWav(mp3File: File, wavFile: File): Boolean {
-    return try {
-        val inputStream = AudioSystem.getAudioInputStream(mp3File)
-        val decodedStream = AudioSystem.getAudioInputStream(
-            AudioSystem.getAudioFileFormat(wavFile).format,
-            inputStream
-        )
-
-        AudioSystem.write(decodedStream, AudioFileFormat.Type.WAVE, wavFile)
-        true
-    } catch (e: Exception) {
-        e.printStackTrace()
-        false
-    }
-}
-
-fun extractWaveformAmplitudes(audioFile: File): List<Float> {
-    val amplitudes = mutableListOf<Float>()
-    val path = audioFile.absolutePath
-    val bufferSize = 2048
-    val overlap = 1024
-    val sampleRate = 44100 // Puedes ajustarlo si sabes el real
-
-    val dispatcher = AudioDispatcherFactory.fromPipe(path, sampleRate, bufferSize, overlap)
-
-    dispatcher.addAudioProcessor(object : AudioProcessor {
-        override fun process(audioEvent: AudioEvent): Boolean {
-            amplitudes += audioEvent.floatBuffer.map { it.absoluteValue }
-            return true
-        }
-
-        override fun processingFinished() {}
-    })
-
-    dispatcher.run()
-    return amplitudes
-}
-
-@Composable
-fun WaveformView2(amplitudes: List<Float>, modifier: Modifier = Modifier) {
-    val maxAmplitude = amplitudes.maxOrNull() ?: 1f
-
-    Canvas(modifier = modifier) {
-        val barWidth = size.width / amplitudes.size
-        amplitudes.forEachIndexed { i, amp ->
-
-            val height = (amp / maxAmplitude) * size.height
+            // Inactive track
             drawLine(
-                color = Color.White,
-                start = Offset(i * barWidth, size.height / 2 - height / 2),
-                end = Offset(i * barWidth, size.height / 2 + height / 2),
-                strokeWidth = barWidth
+                color = inactiveColor,
+                start = Offset(0f, centerY),
+                end = Offset(size.width, centerY),
+                strokeWidth = trackHeightPx
+            )
+
+            // Active track
+            drawLine(
+                color = activeColor,
+                start = Offset(0f, centerY),
+                end = Offset(thumbOffsetX, centerY),
+                strokeWidth = trackHeightPx
+            )
+
+            // Thumb
+            drawCircle(
+                color = activeColor,
+                radius = thumbRadiusPx,
+                center = Offset(thumbOffsetX, centerY)
             )
         }
     }
 }
+
+
+
 
 @Composable
 fun WaveformView(
     amplitudes: List<Float>,
     modifier: Modifier = Modifier.fillMaxWidth()
 ) {
-    val targetSize = 500
+    val targetSize = 100
 
     // Animatables para cada barra
     val animatables = remember {
@@ -633,60 +700,124 @@ fun WaveformView(
                 color = Color.White,
                 start = Offset(x, size.height / 2 - height / 2),
                 end = Offset(x, size.height / 2 + height / 2),
-                strokeWidth = barWidth
+                strokeWidth = barWidth,
+                cap = StrokeCap.Round
+            )
+        }
+    }
+}
+
+@Composable
+fun WaveformSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    amplitudes: List<Float>,
+    modifier: Modifier = Modifier,
+    trackHeight: Dp = 36.dp,
+    thumbRadius: Dp = 6.dp,
+    foregroundColor: Color = Color(0xfff4f89b),
+    backgroundColor: Color = Color.Gray,
+    enabled: Boolean = true
+) {
+    val thumbRadiusPx = with(LocalDensity.current) { thumbRadius.toPx() }
+    val trackHeightPx = with(LocalDensity.current) { trackHeight.toPx() }
+
+    var sliderWidthPx by remember { mutableStateOf(1f) }
+
+    // Calcular posición del pulgar en X según el valor actual
+    val thumbOffsetX = remember(value, sliderWidthPx) {
+        (value.coerceIn(0f, 1f)) * sliderWidthPx
+    }
+
+    val draggableState = rememberDraggableState { delta ->
+        if (!enabled) return@rememberDraggableState
+
+        val newOffset = (thumbOffsetX + delta).coerceIn(0f, sliderWidthPx)
+        val newValue = (newOffset / sliderWidthPx).coerceIn(0f, 1f)
+        onValueChange(newValue)
+    }
+
+    val targetSize = 100
+    val animatables = remember {
+        List(targetSize) { Animatable(0f) }
+    }
+
+    // Animar amplitudes
+    LaunchedEffect(amplitudes) {
+        while (true) {
+            val maxAmp = amplitudes.maxOrNull()?.takeIf { it > 0f } ?: 1f
+            val paddedAmps = if (amplitudes.size < targetSize) {
+                amplitudes + List(targetSize - amplitudes.size) { 0f }
+            } else {
+                amplitudes.takeLast(targetSize)
+            }
+
+            paddedAmps.forEachIndexed { i, amp ->
+                val norm = (amp / maxAmp).coerceIn(0f, 1f)
+                launch {
+                    animatables[i].animateTo(
+                        targetValue = norm,
+                        animationSpec = tween(100, easing = LinearEasing)
+                    )
+                }
+            }
+
+            delay(200)
+        }
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(trackHeight)
+            .onGloballyPositioned { sliderWidthPx = it.size.width.toFloat() }
+            .draggable(
+                orientation = Orientation.Horizontal,
+                state = draggableState,
+                enabled = enabled
+            )
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures { offset ->
+                    val newValue = (offset.x / sliderWidthPx).coerceIn(0f, 1f)
+                    onValueChange(newValue)
+                }
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val barWidth = size.width / targetSize
+            val centerY = size.height / 2
+
+            animatables.forEachIndexed { i, anim ->
+                val x = i * barWidth
+                val barHeight = anim.value * size.height
+
+                val color = if (x <= thumbOffsetX) foregroundColor else backgroundColor
+
+                drawLine(
+                    color = color,
+                    start = Offset(x, centerY - barHeight / 2),
+                    end = Offset(x, centerY + barHeight / 2),
+                    strokeWidth = barWidth,
+                    cap = StrokeCap.Round
+                )
+            }
+
+            // Thumb
+            drawCircle(
+                color = Color.Transparent,
+                radius = thumbRadiusPx,
+                center = Offset(thumbOffsetX, centerY)
             )
         }
     }
 }
 
 
-
-
-
-
-
-
-
-
-fun downsampleAmplitudes(amplitudes: List<Float>, targetSize: Int): List<Float> {
-    if (amplitudes.size <= targetSize) return amplitudes
-
-    val blockSize = amplitudes.size / targetSize
-    return (0 until targetSize).map { i ->
-        val start = i * blockSize
-        val end = minOf(start + blockSize, amplitudes.size)
-        amplitudes.subList(start, end).average().toFloat()
-    }
-}
-
-
-//////////
-fun downloadFileStreaming(
-    url: String,
-    outputFile: File,
-    onChunkDownloaded: (downloadedBytes: Long, totalBytes: Long) -> Unit
-) {
-    val connection = URL(url).openConnection() as HttpURLConnection
-    val totalBytes = connection.contentLengthLong
-
-    connection.inputStream.use { input ->
-        outputFile.outputStream().use { output ->
-            val buffer = ByteArray(8 * 1024)
-            var bytesRead: Int
-            var downloadedBytes = 0L
-
-            while (input.read(buffer).also { bytesRead = it } != -1) {
-                output.write(buffer, 0, bytesRead)
-                output.flush()
-                downloadedBytes += bytesRead
-                onChunkDownloaded(downloadedBytes, totalBytes)
-            }
-        }
-    }
-}
+/*
 
 @Composable
-fun MediaPlayerScreen() {
+fun MediaPlayerScreenUIOK() {
     val playerState = rememberVideoPlayerState()
 
     val amplitudes = remember { mutableStateListOf<Float>() }
@@ -701,7 +832,7 @@ fun MediaPlayerScreen() {
         while (true){
             delay(500)
             if (!playerState.userDragging)
-            progressVideo = playerState.sliderPos
+                progressVideo = playerState.sliderPos
         }
     }
 
@@ -886,102 +1017,116 @@ fun MediaPlayerScreen() {
     }
 }
 
+*/
 
-fun formatTime(millis: Long): String {
-    val totalSec = millis / 1000
-    val min = totalSec / 60
-    val sec = totalSec % 60
-    return "%02d:%02d".format(min, sec)
+fun downsampleAmplitudesORI(amplitudes: List<Float>, targetSize: Int): List<Float> {
+    if (amplitudes.size <= targetSize) return amplitudes
+
+    val blockSize = amplitudes.size / targetSize
+    return (0 until targetSize).map { i ->
+        val start = i * blockSize
+        val end = minOf(start + blockSize, amplitudes.size)
+        amplitudes.subList(start, end).average().toFloat()
+    }
 }
 
-fun durationToLong(duration: String): Long {
-    val parts = duration.split(":")
-    val minutes = parts[0].toLong()
-    val seconds = parts[1].toLong()
-    return (minutes * 60 + seconds) * 1000
+fun downsampleAmplitudes(amplitudes: List<Float>, targetSize: Int): List<Float> {
+    if (amplitudes.size <= targetSize) return amplitudes
+
+    val blockSize = amplitudes.size / targetSize
+    return (0 until targetSize).map { i ->
+        val start = i * blockSize
+        val end = minOf(start + blockSize, amplitudes.size)
+        val chunk = amplitudes.subList(start, end)
+        sqrt(chunk.map { it * it }.average().toFloat())
+    }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-fun extractWaveformAmplitudesFromVideo2(videoUrl: String): List<Float> {
-    val amplitudes = mutableListOf<Float>()
-    val bufferSize = 2048
-    val overlap = 1024
-    val sampleRate = 44100
-
-    val dispatcher = AudioDispatcherFactory.fromPipe(videoUrl, sampleRate, bufferSize, overlap)
-
-    dispatcher.addAudioProcessor(object : AudioProcessor {
-        override fun process(audioEvent: AudioEvent): Boolean {
-            amplitudes += audioEvent.floatBuffer.map { it.absoluteValue }
-            return true
-        }
-
-        override fun processingFinished() {}
-    })
-
-    dispatcher.run()
-    return amplitudes
-}
 
 @Composable
-fun MediaPlayerScreen2() {
-    val playerState = rememberVideoPlayerState()
-
+fun MediaPlayerScreen() {
+    Text("Hoa")
+    /*
     val amplitudes = remember { mutableStateListOf<Float>() }
+    var currentProgress by remember { mutableStateOf(0) }
+    var progressAudio by remember { mutableStateOf(0f) }
+    val downloadComplete = remember { MutableStateFlow(false) }
+    val channelRef = remember { mutableStateOf<SoundChannel?>(null) }
+    val durationSeconds = remember { mutableStateOf(1f) }
 
+    val mp3Url = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+
+    // Actualizar barra de progreso de audio
     LaunchedEffect(Unit) {
-        playerState.openUri("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4")
-
-        withContext(Dispatchers.IO) {
-            val sourceFile = File("E:\\Descargas\\idm\\audio.mp3")
-            //val raw = extractWaveformAmplitudes(sourceFile) // ya reducido
-
-            val raw = extractWaveformAmplitudes(sourceFile)
-            val downsampled = downsampleAmplitudes(raw, 500)
-            val normalized = downsampled.map { it / (downsampled.maxOrNull() ?: 1f) }
-
-            withContext(Dispatchers.Main) {
-                amplitudes.clear()
-                amplitudes.addAll(normalized)
+        while (true) {
+            delay(300)
+            channelRef.value?.let { ch ->
+                if (!ch.playing) return@let
+                val pos = ch.current.seconds.toFloat()
+                durationSeconds.value = ch.total.seconds.toFloat().coerceAtLeast(1f)
+                progressAudio = pos / durationSeconds.value
             }
         }
-
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-        // Video
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            VideoPlayerSurface(
-                playerState = playerState,
-                modifier = Modifier.fillMaxSize()
-            )
+    // Iniciar descarga y reproducción
+    LaunchedEffect(Unit) {
+        val tempFile = File.createTempFile("streaming_audio", ".mp3")
+
+        coroutineScope {
+            launch(Dispatchers.IO) {
+                // Descargar progresivamente el mp3
+                val conn = URL(mp3Url).openConnection()
+                val totalSize = conn.contentLengthLong
+                conn.getInputStream().use { input ->
+                    tempFile.outputStream().use { output ->
+                        val buffer = ByteArray(8192)
+                        var totalRead = 0L
+                        var bytesRead: Int
+
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            totalRead += bytesRead
+                            val percent = (totalRead * 100 / totalSize).toInt()
+                            if (percent != currentProgress) {
+                                currentProgress = percent
+                                if (percent >= 100) {
+                                    downloadComplete.value = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            launch {
+                delay(1000) // Esperamos a que se descargue un poco
+                val stream = tempFile.inputStream().readAllBytes()
+                val audioData = MP3Decoder.decode(stream) ?: error("No se pudo decodificar MP3")
+                val channel = nativeSoundProvider.createSound(audioData, streaming = true).play()
+                channelRef.value = channel
+
+                // Extraer amplitudes
+                val wavData = WAV.decode(audioData.toWav().openAsync())
+                wavData?.let {
+                    val samples = it.samplesInterleaved.data
+                    val floatSamples = samples.map { s -> s.toFloat() / Short.MAX_VALUE }
+                    val downsampled = downsampleAmplitudes(floatSamples, 500)
+                    val normalized = downsampled.map { it / (downsampled.maxOrNull() ?: 1f) }
+                    amplitudes.clear()
+                    amplitudes.addAll(normalized)
+                }
+            }
         }
+    }
 
-        Spacer(Modifier.height(8.dp))
+    // UI
+    Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+        Text("MP3 Player (Streaming)", color = Color.White)
 
-        // Waveform
+        Spacer(Modifier.height(12.dp))
+
         if (amplitudes.isNotEmpty()) {
-            Text("Waveform",  color = Color.White, style = MaterialTheme.typography.labelLarge)
-
-            println("amplitudes size: ${amplitudes.size}")
             WaveformView(
                 amplitudes = amplitudes,
                 modifier = Modifier
@@ -993,59 +1138,35 @@ fun MediaPlayerScreen2() {
 
         Spacer(Modifier.height(8.dp))
 
-        // Controles
-        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-            Button(onClick = { playerState.play() }) { Text("Play") }
-            Button(onClick = { playerState.pause() }) { Text("Pause") }
-        }
-
-        Text("Volume: ${(playerState.volume * 100).toInt()}%")
-
+        // Slider
         Slider(
-            value = playerState.volume,
-            onValueChange = { playerState.volume = it },
+            value = progressAudio,
+            onValueChange = {
+                progressAudio = it
+            },
+            onValueChangeFinished = {
+                channelRef.value?.let { ch ->
+                    ch.current = (progressAudio * durationSeconds.value).seconds
+                }
+            },
             valueRange = 0f..1f
         )
+
+        Text(
+            text = "Posición: ${(progressAudio * durationSeconds.value).toInt()}s / ${durationSeconds.value.toInt()}s",
+            color = Color.White
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { channelRef.value?.resume() }) { Text("Play") }
+            Button(onClick = { channelRef.value?.pause() }) { Text("Pause") }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("Progreso de descarga: $currentProgress%", color = Color.White)
     }
-}
+    */
 
-fun extractWaveformAmplitudes22(audioFile: File): List<Float> {
-    val fileToProcess = if (audioFile.extension.lowercase() == "mp3") {
-        val wavFile = File.createTempFile("converted_", ".wav")
-        if (convertMp3ToWav(audioFile, wavFile)) wavFile else audioFile
-    } else audioFile
-
-    val amplitudes = mutableListOf<Float>()
-
-    val dispatcher = AudioDispatcherFactory.fromFile(fileToProcess, 2048, 1024)
-    dispatcher.addAudioProcessor(object : AudioProcessor {
-        override fun process(audioEvent: AudioEvent): Boolean {
-            amplitudes += audioEvent.floatBuffer.map { it.absoluteValue }
-            return true
-        }
-        override fun processingFinished() {}
-    })
-
-    dispatcher.run()
-
-    // Limpieza si fue un archivo temporal
-    if (fileToProcess != audioFile) fileToProcess.delete()
-
-    return amplitudes
-}
-
-fun extractWaveformAmplitudes2(audioFile: File): List<Float> {
-    val amplitudes = mutableListOf<Float>()
-
-    val dispatcher = AudioDispatcherFactory.fromFile(audioFile, 2048, 1024)
-    dispatcher.addAudioProcessor(object : AudioProcessor {
-        override fun process(audioEvent: AudioEvent): Boolean {
-            amplitudes += audioEvent.floatBuffer.map { it.absoluteValue }
-            return true
-        }
-        override fun processingFinished() {}
-    })
-
-    dispatcher.run()
-    return amplitudes
 }

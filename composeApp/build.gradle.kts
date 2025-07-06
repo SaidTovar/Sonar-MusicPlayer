@@ -53,13 +53,13 @@ kotlin {
 
             //Icons
             implementation("br.com.devsrsouza.compose.icons:tabler-icons:1.1.1")
+            implementation(compose.materialIconsExtended)
 
-            //Audio and video
-            //implementation("io.github.kdroidfilter:composemediaplayer:0.7.1")
-            implementation("io.github.kdroidfilter:composemediaplayer:0.7.1")
-            implementation("be.tarsos.dsp:core:2.5")
-            implementation("be.tarsos.dsp:jvm:2.5")
-            implementation("com.googlecode.soundlibs:mp3spi:1.9.5.4")
+            //usar reproductor kmp y korau para las amplitudes
+            implementation("com.soywiz.korlibs.korio:korio-jvm:4.0.0")
+            implementation("com.soywiz.korlibs.korau:korau-jvm:4.0.0")
+            implementation("io.github.khubaibkhan4:mediaplayer-kmp:2.0.9")
+
 
         }
         commonTest.dependencies {
